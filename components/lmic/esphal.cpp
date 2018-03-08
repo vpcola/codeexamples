@@ -11,22 +11,10 @@
 
 static const char* TAG = "LMIC_HAL";
 
-// Move this to main.c so that it'll be
-// easy to assign pin mappings there
-#if 0
-const lmic_pinmap_t lmic_pins = {
-    .nss = 22,
-    .rst = 19,
-    .dio = {23, 18, 5},
-    .spi = {4, 2, 17},
-};
-#endif
-
 extern const lmic_pinmap_t lmic_pins;
 
 #define ESP_INTR_FLAG_DEFAULT 0
 
-#ifdef USE_GPIO_INTERRUPTS
 static xQueueHandle gpio_evt_queue = NULL;
 
 // -----------------------------------------------------------------------------
@@ -37,7 +25,6 @@ static void IRAM_ATTR gpio_isr_handler(void * arg)
     xQueueSendFromISR(gpio_evt_queue, &dionum, NULL);
 }
 
-#endif
 
 // -----------------------------------------------------------------------------
 // I/O
@@ -46,36 +33,29 @@ static void hal_io_init () {
   ESP_LOGI(TAG, "Starting IO initialization");
 
   gpio_config_t io_conf;
-  io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
+  io_conf.intr_type = GPIO_INTR_DISABLE;
   io_conf.mode = GPIO_MODE_OUTPUT;
-  io_conf.pin_bit_mask = ((1ULL<<lmic_pins.nss) | (1ULL<<lmic_pins.rst));
-  io_conf.pull_down_en = 0;
-  io_conf.pull_up_en = 0;
+  io_conf.pin_bit_mask = ((1ULL<< (gpio_num_t) lmic_pins.nss) | (1ULL<< (gpio_num_t) lmic_pins.rst));
+  io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
   gpio_config(&io_conf);
 
-#ifdef USE_GPIO_INTERRUPTS
   // Setup all DIO pins to use interrupts
   // DIOs are activated on the rising edge
-  io_conf.intr_type = GPIO_PIN_INTR_POSEDGE;
-  io_conf.pin_bit_mask = ((1ULL<<lmic_pins.dio[0]) | (1ULL<<lmic_pins.dio[1]) | (1ULL<<lmic_pins.dio[2]));
+  io_conf.intr_type = GPIO_INTR_POSEDGE;
+  io_conf.pin_bit_mask = ((1ULL<< (gpio_num_t) lmic_pins.dio[0]) | (1ULL<< (gpio_num_t) lmic_pins.dio[1]) | (1ULL<< (gpio_num_t) lmic_pins.dio[2]));
   io_conf.mode = GPIO_MODE_INPUT;
-  io_conf.pull_up_en = 1;
-#else
-  io_conf.mode = GPIO_MODE_INPUT;
-  io_conf.pin_bit_mask = ((1ULL<<lmic_pins.dio[0]) | (1ULL<<lmic_pins.dio[1]) | (1ULL<<lmic_pins.dio[2]));
-#endif
+  io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
 
   gpio_config(&io_conf);
 
-#ifdef USE_GPIO_INTERRUPTS
   // Create a queue to handle the event from ISR
   gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
   gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
   // hook isr handler to the specific GPIO pins
-  gpio_isr_handler_add(lmic_pins.dio[0], gpio_isr_handler, (void *) 0);
-  gpio_isr_handler_add(lmic_pins.dio[1], gpio_isr_handler, (void *) 1);
-  gpio_isr_handler_add(lmic_pins.dio[2], gpio_isr_handler, (void *) 2);
-#endif
+  gpio_isr_handler_add((gpio_num_t) lmic_pins.dio[0], gpio_isr_handler, (void *) 0);
+  gpio_isr_handler_add((gpio_num_t) lmic_pins.dio[1], gpio_isr_handler, (void *) 1);
+  gpio_isr_handler_add((gpio_num_t) lmic_pins.dio[2], gpio_isr_handler, (void *) 2);
 
   ESP_LOGI(TAG, "Finished IO initialization");
 }
@@ -87,29 +67,28 @@ void hal_pin_rxtx (u1_t val) {
 
 // set radio NSS pin to given value
 void hal_pin_nss (u1_t val) {
-  gpio_set_level(lmic_pins.nss, val);
+  gpio_set_level((gpio_num_t) lmic_pins.nss, val);
 }
 
 // set radio RST pin to given value (or keep floating!)
 void hal_pin_rst (u1_t val) {
   gpio_config_t io_conf;
-  io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
-  io_conf.pin_bit_mask = (1<<lmic_pins.rst);
-  io_conf.pull_down_en = 0;
-  io_conf.pull_up_en = 0;
+  io_conf.intr_type = GPIO_INTR_DISABLE;
+  io_conf.pin_bit_mask = (1<< (gpio_num_t) lmic_pins.rst);
+  io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
 
   if(val == 0 || val == 1) { // drive pin
     io_conf.mode = GPIO_MODE_OUTPUT;
     gpio_config(&io_conf);
 
-    gpio_set_level(lmic_pins.rst, val);
+    gpio_set_level((gpio_num_t) lmic_pins.rst, val);
   } else { // keep pin floating
     io_conf.mode = GPIO_MODE_INPUT;
     gpio_config(&io_conf);
   }
 }
 
-#ifdef USE_GPIO_INTERRUPTS
 // Called by the os_runloop routing to check
 // if there are any pending interrupts that need
 // to be services
@@ -125,38 +104,6 @@ void hal_io_check()
     }
 }
 
-#else
-// Attach hal_io_check() to hal_enableIRQs below
-// since lmic would usually call this routine to 
-// check if there are changes to the dio states.
-bool dio_states[3];
-void hal_io_check() {
-  if (dio_states[0] != gpio_get_level(lmic_pins.dio[0])) {
-    dio_states[0] = !dio_states[0];
-    if (dio_states[0]) {
-      ESP_LOGI(TAG, "Fired IRQ0\n");
-      radio_irq_handler(0);
-    }
-  }
-
-  if (dio_states[1] != gpio_get_level(lmic_pins.dio[1])) {
-    dio_states[1] = !dio_states[1];
-    if (dio_states[1]) {
-      ESP_LOGI(TAG, "Fired IRQ1\n");
-      radio_irq_handler(1);
-    }
-  }
-
-  if (dio_states[2] != gpio_get_level(lmic_pins.dio[2])) {
-    dio_states[2] = !dio_states[2];
-    if (dio_states[2]) {
-      ESP_LOGI(TAG, "Fired IRQ2\n");
-      radio_irq_handler(2);
-    }
-  }
-}
-#endif
-
 // -----------------------------------------------------------------------------
 // SPI
 
@@ -165,23 +112,20 @@ spi_device_handle_t spi_handle;
 static void hal_spi_init () {
   ESP_LOGI(TAG, "Starting SPI initialization");
   esp_err_t ret;
+  spi_bus_config_t buscfg;
 
-  // init master
-  spi_bus_config_t buscfg={
-    .miso_io_num = lmic_pins.spi[0],
-    .mosi_io_num = lmic_pins.spi[1],
-    .sclk_io_num = lmic_pins.spi[2],
-    .quadwp_io_num = -1,
-    .quadhd_io_num = -1,
-  };
+  buscfg.miso_io_num = (gpio_num_t) lmic_pins.spi[0];
+  buscfg.mosi_io_num = (gpio_num_t) lmic_pins.spi[1];
+  buscfg.sclk_io_num = (gpio_num_t) lmic_pins.spi[2];
+  buscfg.quadwp_io_num = -1;
+  buscfg.quadhd_io_num = -1;
 
-  // init device
-  spi_device_interface_config_t devcfg={
-    .clock_speed_hz = 10000000,
-    .mode = 1,
-    .spics_io_num = -1,
-    .queue_size = 7,
-  };
+  spi_device_interface_config_t devcfg;
+  
+  devcfg.clock_speed_hz = 10000000;
+  devcfg.mode = 1;
+  devcfg.spics_io_num = (gpio_num_t) -1;
+  devcfg.queue_size = 7;
 
   ret = spi_bus_initialize(HSPI_HOST, &buscfg, 1);
   assert(ret==ESP_OK);
@@ -213,14 +157,14 @@ u1_t hal_spi (u1_t data) {
 static void hal_time_init () 
 {
   ESP_LOGI(TAG, "Starting initialisation of timer");
-  int timer_group = TIMER_GROUP_0;
-  int timer_idx = TIMER_1;
+  timer_group_t timer_group = TIMER_GROUP_0;
+  timer_idx_t timer_idx = TIMER_1;
   timer_config_t config;
-  config.alarm_en = 0;
-  config.auto_reload = 0;
+  config.alarm_en = TIMER_ALARM_DIS;
+  config.auto_reload = TIMER_AUTORELOAD_DIS;
   config.counter_dir = TIMER_COUNT_UP;
   config.divider = TIMER_DIVIDER;
-  config.intr_type = 0;
+  config.intr_type = TIMER_INTR_LEVEL;
   config.counter_en = TIMER_PAUSE;
   /*Configure timer*/
   timer_init(timer_group, timer_idx, &config);
@@ -255,14 +199,7 @@ void hal_waitUntil (ll_u8_t time) {
     ESP_LOGI(TAG, "Wait until (%lld)", time);
     ll_s8_t delta = delta_time(time);
     ESP_LOGI(TAG, "Wait for %lld (%d ms)", delta, osticks2ms(delta));
-#if 0
-    while( delta > 2000){
-        vTaskDelay(1 / portTICK_PERIOD_MS);
-        delta -= 1000;
-    } if(delta > 0){
-        vTaskDelay(delta / portTICK_PERIOD_MS);
-    }
-#endif
+
     while(hal_ticks() < time)
     {
         // yield to higher priority task
@@ -294,9 +231,6 @@ void hal_disableIRQs () {
 void hal_enableIRQs () {
   if(--x_irq_level == 0){
     //taskENABLE_INTERRUPTS();
-#ifndef USE_GPIO_INTERRUPTS
-    hal_io_check();
-#endif
   }
 }
 

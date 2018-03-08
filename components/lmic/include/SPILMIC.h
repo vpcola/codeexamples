@@ -7,6 +7,8 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 
+#include "Timer.h"
+
 #define LMIC_SPI_MODE   1
 #define LMIC_SPI_SPEED 10000000
 
@@ -18,7 +20,8 @@ class SPILMIC : public SPIDevice
             m_rst(rst),
             m_dio0(dio0),
             m_dio1(dio1),
-            m_dio2(dio2)
+            m_dio2(dio2),
+            m_timer(TIMER_GROUP_0, TIMER_1, 1600)
         {}
 
         void init();
@@ -28,6 +31,9 @@ class SPILMIC : public SPIDevice
         gpio_num_t m_dio0;
         gpio_num_t m_dio1;
         gpio_num_t m_dio2;
+
+        // Timers
+        Timer m_timer; 
 
         // Event handler for ISR
         static xQueueHandle m_evtqueue;

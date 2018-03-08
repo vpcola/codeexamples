@@ -6,8 +6,6 @@
 #define CFG_sx1276_radio 1
 
 
-#define USE_GPIO_INTERRUPTS 1
-
 #ifdef __cplusplus
 extern "C" {
 #endif
